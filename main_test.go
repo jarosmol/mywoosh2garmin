@@ -11,6 +11,8 @@ import (
 	"github.com/muktihari/fit/profile/filedef"
 	"github.com/muktihari/fit/profile/mesgdef"
 	"github.com/muktihari/fit/profile/typedef"
+
+	"mywhoosh2garmin/garmin"
 )
 
 // createTestFitFile creates a synthetic MyWhoosh-like FIT file with:
@@ -82,8 +84,18 @@ func TestFixFitFile(t *testing.T) {
 	createTestFitFile(t, inputPath)
 
 	// Run the fixer
-	if err := fixFitFile(inputPath, outputPath); err != nil {
+	dev := deviceFromConfig(appConfig{Device: "edge840"})
+	info, err := fixFitFile(inputPath, outputPath, dev)
+	if err != nil {
 		t.Fatalf("fixFitFile failed: %v", err)
+	}
+
+	// Ride time comes from the records (10 records, 1 s apart)
+	if info.Start.IsZero() || info.End.IsZero() {
+		t.Fatalf("ride time not detected: %+v", info)
+	}
+	if got := info.End.Sub(info.Start); got != 9*time.Second {
+		t.Errorf("ride duration: got %v, want 9s", got)
 	}
 
 	// Read back and verify
@@ -132,6 +144,80 @@ func TestFixFitFile(t *testing.T) {
 	}
 	if sess.AvgCadence != 90 {
 		t.Errorf("avg cadence: got %d, want 90", sess.AvgCadence)
+	}
+
+	// Verify the device was relabelled as the chosen Garmin model
+	if result.FileId.Manufacturer != typedef.ManufacturerGarmin {
+		t.Errorf("manufacturer: got %v, want garmin", result.FileId.Manufacturer)
+	}
+	if result.FileId.Product != typedef.GarminProductEdge840.Uint16() {
+		t.Errorf("product: got %d, want %d (Edge 840)",
+			result.FileId.Product, typedef.GarminProductEdge840.Uint16())
+	}
+	if result.FileId.SerialNumber != fakeSerialNumber {
+		t.Errorf("serial: got %d, want %d", result.FileId.SerialNumber, fakeSerialNumber)
+	}
+}
+
+func TestDevicePresets(t *testing.T) {
+	// Unknown / empty keys fall back to the original default (Fenix 6S)
+	for _, key := range []string{"", "nonsense"} {
+		if p := findPreset(key); p.Product != typedef.GarminProductFenix6s {
+			t.Errorf("findPreset(%q) = %v, want Fenix 6S default", key, p.Label)
+		}
+	}
+	seen := map[string]bool{}
+	for _, p := range devicePresets {
+		if seen[p.Key] {
+			t.Errorf("duplicate preset key %q", p.Key)
+		}
+		seen[p.Key] = true
+		if findPresetByLabel(p.Label).Key != p.Key {
+			t.Errorf("label %q does not round-trip", p.Label)
+		}
+		if p.Product.Uint16() == 0 {
+			t.Errorf("preset %q has no product id", p.Key)
+		}
+	}
+	// Serial override from config
+	if d := deviceFromConfig(appConfig{DeviceSerial: 12345}); d.Serial != 12345 {
+		t.Errorf("serial override ignored: %d", d.Serial)
+	}
+}
+
+func TestOverlapFraction(t *testing.T) {
+	base := time.Date(2026, 11, 6, 17, 0, 0, 0, time.UTC)
+	at := func(min int) time.Time { return base.Add(time.Duration(min) * time.Minute) }
+
+	cases := []struct {
+		name           string
+		aS, aE, bS, bE int
+		want           float64
+	}{
+		{"identical", 0, 60, 0, 60, 1},
+		{"watch started 2 min earlier", 2, 62, 0, 61, 59.0 / 60.0},
+		{"no overlap", 0, 60, 90, 120, 0},
+		{"touching", 0, 60, 60, 90, 0},
+		{"short run inside long ride", 0, 120, 30, 60, 1},
+		{"small overlap", 0, 60, 50, 110, 10.0 / 60.0},
+	}
+	for _, c := range cases {
+		got := overlapFraction(at(c.aS), at(c.aE), at(c.bS), at(c.bE))
+		if diff := got - c.want; diff > 1e-9 || diff < -1e-9 {
+			t.Errorf("%s: got %.4f, want %.4f", c.name, got, c.want)
+		}
+	}
+
+	ride := rideInfo{Start: at(0), End: at(60)}
+	existing := []garmin.ExistingActivity{
+		{ID: 1, Name: "Morning Run", Start: at(-180), End: at(-120)},
+		{ID: 2, Name: "Indoor Cycling", Start: at(1), End: at(59)},
+	}
+	if hit, ok := findOverlap(ride, existing); !ok || hit.ID != 2 {
+		t.Errorf("findOverlap: got %+v %v, want activity 2", hit, ok)
+	}
+	if _, ok := findOverlap(ride, existing[:1]); ok {
+		t.Error("findOverlap: unexpected match with unrelated activity")
 	}
 }
 

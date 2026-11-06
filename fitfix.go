@@ -27,10 +27,15 @@ const (
 
 // Device spoofing constants.
 const (
-	garminManufacturer = typedef.ManufacturerGarmin   // 1
-	fenix6sProduct     = typedef.GarminProductFenix6s // 3288
+	garminManufacturer = typedef.ManufacturerGarmin // 1
 	fakeSerialNumber   = uint32(3420897194)
 )
+
+// rideInfo describes when the ride took place (UTC), taken from the FIT records.
+type rideInfo struct {
+	Start time.Time
+	End   time.Time
+}
 
 // logFn can be overridden to redirect log output (e.g., to a GUI).
 var logFn = func(format string, args ...interface{}) {
@@ -133,10 +138,13 @@ func generateOutputFilename(inputPath string) string {
 
 // fixFitFile reads a MyWhoosh FIT activity, fixes missing session averages,
 // strips temperature from records, spoofs the device, and writes the result.
-func fixFitFile(inputPath, outputPath string) error {
+// It returns the start and end time of the ride.
+func fixFitFile(inputPath, outputPath string, dev deviceSpec) (rideInfo, error) {
+	var info rideInfo
+
 	f, err := os.Open(inputPath)
 	if err != nil {
-		return err
+		return info, err
 	}
 	defer f.Close()
 
@@ -150,12 +158,12 @@ func fixFitFile(inputPath, outputPath string) error {
 
 	_, err = dec.Decode()
 	if err != nil {
-		return fmt.Errorf("decode: %w", err)
+		return info, fmt.Errorf("decode: %w", err)
 	}
 
 	activity, ok := lis.File().(*filedef.Activity)
 	if !ok {
-		return fmt.Errorf("not an activity file (got %T)", lis.File())
+		return info, fmt.Errorf("not an activity file (got %T)", lis.File())
 	}
 
 	// Collect metrics from records and strip temperature
@@ -163,6 +171,15 @@ func fixFitFile(inputPath, outputPath string) error {
 	var heartRates, cadences []uint8
 
 	for _, rec := range activity.Records {
+		if !rec.Timestamp.IsZero() {
+			ts := rec.Timestamp.UTC()
+			if info.Start.IsZero() || ts.Before(info.Start) {
+				info.Start = ts
+			}
+			if ts.After(info.End) {
+				info.End = ts
+			}
+		}
 		if rec.Power != uint16Invalid {
 			powers = append(powers, rec.Power)
 		}
@@ -194,19 +211,36 @@ func fixFitFile(inputPath, outputPath string) error {
 		}
 	}
 
+	// Fall back to the session times if records carried no timestamps
+	if info.Start.IsZero() {
+		for _, sess := range activity.Sessions {
+			if !sess.StartTime.IsZero() {
+				info.Start = sess.StartTime.UTC()
+				if sess.TotalElapsedTime != 0 && sess.TotalElapsedTime != ^uint32(0) {
+					info.End = info.Start.Add(
+						time.Duration(sess.TotalElapsedTime) * time.Millisecond)
+				}
+				break
+			}
+		}
+	}
+
 	// Spoof device
-	spoofDevice(activity)
+	spoofDevice(activity, dev)
 
 	// Encode
 	fit := activity.ToFIT(nil)
 
 	out, err := os.Create(outputPath)
 	if err != nil {
-		return err
+		return info, err
 	}
-	defer out.Close()
 
-	return encoder.New(out, encoder.WithProtocolVersion(proto.V2)).Encode(&fit)
+	if err := encoder.New(out, encoder.WithProtocolVersion(proto.V2)).Encode(&fit); err != nil {
+		out.Close()
+		return info, err
+	}
+	return info, out.Close()
 }
 
 func shouldFixU16(v uint16) bool { return v == uint16Invalid || v == 0 }
@@ -232,18 +266,25 @@ func avgU8(vals []uint8) uint8 {
 // Device spoofing
 // ---------------------------------------------------------------------------
 
-func spoofDevice(activity *filedef.Activity) {
+func spoofDevice(activity *filedef.Activity, dev deviceSpec) {
+	serial := dev.Serial
+	if serial == 0 {
+		serial = fakeSerialNumber
+	}
+
 	activity.FileId.Manufacturer = garminManufacturer
-	activity.FileId.Product = fenix6sProduct.Uint16()
-	activity.FileId.SerialNumber = fakeSerialNumber
+	activity.FileId.Product = dev.Product
+	activity.FileId.SerialNumber = serial
+	activity.FileId.ProductName = ""
 
 	for _, di := range activity.DeviceInfos {
 		di.Manufacturer = garminManufacturer
-		di.Product = fenix6sProduct.Uint16()
-		di.SerialNumber = fakeSerialNumber
+		di.Product = dev.Product
+		di.SerialNumber = serial
+		di.ProductName = ""
 	}
 
-	logFn("  → device spoofed: Garmin Fenix 6S Pro (product %d)\n", fenix6sProduct)
+	logFn("  → device spoofed: Garmin %s (product %d)\n", dev.Name, dev.Product)
 }
 
 // ---------------------------------------------------------------------------

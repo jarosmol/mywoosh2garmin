@@ -101,8 +101,18 @@ func (s *ssoSession) post(reqURL string, form url.Values, useReferer bool) (stri
 	return string(body), nil
 }
 
+// MFAPrompt is called when Garmin asks for a verification code (MFA / 2FA).
+// It must return the code the user received by e-mail, SMS or an
+// authenticator app. Returning an error cancels the login.
+type MFAPrompt func() (string, error)
+
+// ErrMFARequired is returned when Garmin asks for a verification code but no
+// MFAPrompt was supplied (e.g. in unattended background mode).
+var ErrMFARequired = fmt.Errorf("Garmin asks for a verification code (MFA) — log in from the app window")
+
 // Login performs the full Garmin SSO login flow and returns OAuth tokens.
-func Login(email, password, domain string) (*OAuth1Token, *OAuth2Token, error) {
+// promptMFA may be nil; it is only used when the account has MFA enabled.
+func Login(email, password, domain string, promptMFA MFAPrompt) (*OAuth1Token, *OAuth2Token, error) {
 	if domain == "" {
 		domain = "garmin.com"
 	}
@@ -177,9 +187,21 @@ func Login(email, password, domain string) (*OAuth1Token, *OAuth2Token, error) {
 
 	title := titleMatch[1]
 	if strings.Contains(title, "MFA") {
-		return nil, nil, fmt.Errorf(
-			"MFA is required but not yet supported in this tool.\n" +
-				"  Disable MFA temporarily, or use the Python version")
+		if promptMFA == nil {
+			return nil, nil, ErrMFARequired
+		}
+		body, err = submitMFA(sess, ssoBase, signinParams, body, promptMFA)
+		if err != nil {
+			return nil, nil, fmt.Errorf("sso mfa: %w", err)
+		}
+		titleMatch = titleRe.FindStringSubmatch(body)
+		if titleMatch == nil {
+			return nil, nil, fmt.Errorf("no title in MFA response — verification may have failed")
+		}
+		title = titleMatch[1]
+		if title != "Success" {
+			return nil, nil, fmt.Errorf("verification code rejected: %q", title)
+		}
 	}
 	if title != "Success" {
 		return nil, nil, fmt.Errorf("login failed: %q (check credentials)", title)
@@ -223,6 +245,38 @@ func ExchangeForOAuth2(oauth1Token *OAuth1Token) (*OAuth2Token, error) {
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+// submitMFA asks the user for the verification code and posts it to Garmin's
+// SSO, mirroring the flow used by the garth library.
+func submitMFA(sess *ssoSession, ssoBase string, signinParams url.Values,
+	mfaPage string, promptMFA MFAPrompt) (string, error) {
+
+	csrf := csrfRe.FindStringSubmatch(mfaPage)
+	if csrf == nil {
+		return "", fmt.Errorf("CSRF token not found on MFA page")
+	}
+
+	code, err := promptMFA()
+	if err != nil {
+		return "", fmt.Errorf("verification cancelled: %w", err)
+	}
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return "", fmt.Errorf("no verification code entered")
+	}
+
+	form := url.Values{
+		"mfa-code": {code},
+		"embed":    {"true"},
+		"_csrf":    {csrf[1]},
+		"fromPage": {"setupEnterMfaCode"},
+	}
+	return sess.post(
+		ssoBase+"/sso/verifyMFA/loginEnterMfaCode?"+signinParams.Encode(),
+		form,
+		true,
+	)
+}
 
 func fetchConsumer() (*oauthConsumer, error) {
 	resp, err := http.Get(oauthConsumerURL)

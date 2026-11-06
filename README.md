@@ -19,9 +19,20 @@ MyWhoosh2Garmin fixes all of this automatically:
 |---|---|
 | Missing avg power / HR / cadence | Calculated from ride records |
 | Fake temperature data | Stripped from all records |
-| MyWhoosh device identity | Spoofed to Garmin Fenix 6S Pro |
+| MyWhoosh device identity | Spoofed to a Garmin device you choose (default Fenix 6S) |
 
 The result: your indoor rides show up on Garmin Connect just like a native Garmin recording, complete with **Training Effect**, **VO2max updates**, **Training Load**, and **Training Status**.
+
+## What's new in this fork
+
+- **Garmin MFA / two-step verification** — if Garmin asks for a code, the app shows a dialog for it.
+- **Choose the Garmin device** rides are labelled as (Fenix, Forerunner, Edge, Epix).
+- **No double counting** — rides are skipped if Garmin Connect already has an activity at the same time (e.g. you also recorded on your watch). Can be disabled with `"skip_overlap_check": true` in `config.json`.
+- **Background mode** — `mywhoosh2garmin.exe --sync` uploads all new rides without opening a window; output goes to `~/.mywhoosh2garmin/sync.log`.
+- **Automatic sync button** (Windows) — creates a Task Scheduler task that runs the background sync every 60 minutes while you are logged in. A message box appears (at most once a day) only if you need to log in again.
+- **Optional remembered MyWhoosh password**, encrypted with Windows DPAPI (readable only by your Windows account on that PC), so background sync can renew the MyWhoosh session by itself. Garmin passwords are never stored.
+- Rides are uploaded **oldest first**, so Garmin's training status builds up in order.
+- The build workflow also runs on pushes to `main` and can be started by hand (Actions → Build & Release → Run workflow); the `.exe` is attached to the run as an artifact.
 
 ## Download
 
