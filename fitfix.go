@@ -28,7 +28,9 @@ const (
 // Device spoofing constants.
 const (
 	garminManufacturer = typedef.ManufacturerGarmin // 1
-	fakeSerialNumber   = uint32(3420897194)
+	// fakeSerialNumber was shared by every user of the original tool and is
+	// only a last-resort fallback now (see randomSerial / Unit ID setting).
+	fakeSerialNumber = uint32(3420897194)
 )
 
 // rideInfo describes when the ride took place (UTC), taken from the FIT records.
@@ -282,9 +284,17 @@ func spoofDevice(activity *filedef.Activity, dev deviceSpec) {
 		di.Product = dev.Product
 		di.SerialNumber = serial
 		di.ProductName = ""
+		if dev.SoftwareVersion != 0 {
+			di.SoftwareVersion = dev.SoftwareVersion
+		}
 	}
 
-	logFn("  → device spoofed: Garmin %s (product %d)\n", dev.Name, dev.Product)
+	fw := ""
+	if dev.SoftwareVersion != 0 {
+		fw = fmt.Sprintf(", firmware %d.%02d", dev.SoftwareVersion/100, dev.SoftwareVersion%100)
+	}
+	logFn("  → device spoofed: Garmin %s (product %d, Unit ID %d%s)\n",
+		dev.Name, dev.Product, serial, fw)
 }
 
 // ---------------------------------------------------------------------------

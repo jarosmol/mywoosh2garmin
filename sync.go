@@ -216,8 +216,8 @@ func (s *syncer) ensureGarmin(creds credentials) (*garmin.Client, error) {
 
 // processActivity downloads, fixes and uploads a single ride.
 func (s *syncer) processActivity(act mywhoosh.Activity, creds credentials) (outcome, error) {
+	dev := currentDevice()
 	cfg := loadAppConfig()
-	dev := deviceFromConfig(cfg)
 
 	// 1. Download FIT from MyWhoosh
 	s.logf("⬇ Downloading: %s (%s)…", act.DisplayName(), act.FormattedDate())

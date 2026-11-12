@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -13,6 +14,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -39,7 +41,7 @@ func main() {
 func runGUI() {
 	a := app.New()
 	w := a.NewWindow("MyWhoosh2Garmin")
-	w.Resize(fyne.NewSize(760, 820))
+	w.Resize(fyne.NewSize(780, 900))
 
 	dir := appConfigDir()
 	cfg := loadAppConfig()
@@ -97,14 +99,119 @@ func runGUI() {
 	mwStatusLabel := widget.NewLabel("")
 	garminStatusLabel := widget.NewLabel("")
 
-	// --- Settings ---
-	deviceSelect := widget.NewSelect(presetLabels(), nil)
-	deviceSelect.SetSelected(findPreset(cfg.Device).Label)
-	deviceSelect.OnChanged = func(label string) {
+	// --- Device settings ---
+	// Dropdown options: the presets, plus the imported model if it is not listed.
+	deviceOptions := func(c appConfig) []string {
+		opts := presetLabels()
+		if c.Device == customDeviceKey && c.DeviceProduct != 0 {
+			opts = append(opts, customLabel(c.DeviceProduct))
+		}
+		return opts
+	}
+	deviceSelect := widget.NewSelect(deviceOptions(cfg), nil)
+	deviceSelect.SetSelected(deviceFromConfig(cfg).Name)
+
+	unitIDEntry := widget.NewEntry()
+	unitIDEntry.SetPlaceHolder("Unit ID of your Garmin (optional)")
+	if cfg.DeviceSerial != 0 {
+		unitIDEntry.SetText(strconv.FormatUint(uint64(cfg.DeviceSerial), 10))
+	}
+
+	deviceInfoLabel := widget.NewLabel("")
+	deviceInfoLabel.Wrapping = fyne.TextWrapWord
+	refreshDeviceInfo := func() {
 		c := loadAppConfig()
+		if c.DeviceSerial != 0 {
+			txt := fmt.Sprintf("Rides will be attributed to your own device (Unit ID %d)", c.DeviceSerial)
+			if c.DeviceSoftwareVersion != 0 {
+				txt += fmt.Sprintf(", firmware %d.%02d", c.DeviceSoftwareVersion/100, c.DeviceSoftwareVersion%100)
+			}
+			deviceInfoLabel.SetText(txt + ".")
+		} else {
+			deviceInfoLabel.SetText("No Unit ID set — a random serial number is used. " +
+				"Tip: load a .fit file recorded on your own Garmin so Garmin Connect " +
+				"can process the rides on that device (e.g. cycling VO2max on an Edge).")
+		}
+	}
+	refreshDeviceInfo()
+
+	// updatingDevice suppresses the OnChanged handlers while the UI is being
+	// filled in programmatically.
+	updatingDevice := false
+
+	deviceSelect.OnChanged = func(label string) {
+		if updatingDevice {
+			return
+		}
+		c := loadAppConfig()
+		if c.Device == customDeviceKey && label == customLabel(c.DeviceProduct) {
+			return
+		}
 		c.Device = findPresetByLabel(label).Key
+		c.DeviceProduct = 0
+		// The firmware belongs to the imported model; drop it when switching.
+		c.DeviceSoftwareVersion = 0
 		saveAppConfig(c)
+		updatingDevice = true
+		deviceSelect.SetOptions(deviceOptions(c))
+		deviceSelect.SetSelected(label)
+		updatingDevice = false
 		appendLog("Rides will be labelled as: Garmin " + label)
+		refreshDeviceInfo()
+	}
+
+	unitIDEntry.OnChanged = func(text string) {
+		if updatingDevice {
+			return
+		}
+		text = strings.TrimSpace(text)
+		c := loadAppConfig()
+		if text == "" {
+			c.DeviceSerial = 0
+		} else {
+			v, err := strconv.ParseUint(text, 10, 32)
+			if err != nil || v == 0 {
+				deviceInfoLabel.SetText("⚠ Unit ID must be a number (digits only), e.g. 3461453371.")
+				return
+			}
+			c.DeviceSerial = uint32(v)
+		}
+		saveAppConfig(c)
+		refreshDeviceInfo()
+	}
+
+	loadFitBtn := widget.NewButtonWithIcon("Use my device from a .fit file…", theme.FolderOpenIcon(), nil)
+	loadFitBtn.OnTapped = func() {
+		fd := dialog.NewFileOpen(func(rc fyne.URIReadCloser, err error) {
+			if err != nil {
+				appendLog("❌ " + err.Error())
+				return
+			}
+			if rc == nil {
+				return // cancelled
+			}
+			defer rc.Close()
+
+			dev, err := readDeviceFromFit(rc)
+			if err != nil {
+				appendLog("❌ Could not read the device: " + err.Error())
+				return
+			}
+			c := loadAppConfig()
+			applyImportedDevice(&c, dev)
+			saveAppConfig(c)
+
+			updatingDevice = true
+			deviceSelect.SetOptions(deviceOptions(c))
+			deviceSelect.SetSelected(deviceFromConfig(c).Name)
+			unitIDEntry.SetText(strconv.FormatUint(uint64(c.DeviceSerial), 10))
+			updatingDevice = false
+			refreshDeviceInfo()
+
+			appendLog("✓ Using your device: " + dev.String())
+		}, w)
+		fd.SetFilter(storage.NewExtensionFileFilter([]string{".fit", ".FIT"}))
+		fd.Show()
 	}
 
 	rememberCheck := widget.NewCheck(
@@ -248,14 +355,27 @@ func runGUI() {
 
 		uploadBtn := widget.NewButtonWithIcon("⬆ Upload", theme.UploadIcon(), nil)
 		uploadBtn.Importance = widget.HighImportance
-		if s.tracker.IsSynced(activity.ID) {
-			uploadBtn.SetText("✓ Synced")
-			uploadBtn.Importance = widget.LowImportance
-			uploadBtn.Disable()
-		}
 
 		act := activity
 		uploadBtn.OnTapped = func() { uploadActivity(act, uploadBtn) }
+
+		if s.tracker.IsSynced(activity.ID) {
+			// Already synced: offer a re-upload (e.g. after changing the device).
+			uploadBtn.SetText("✓ Synced · Re-upload")
+			uploadBtn.SetIcon(theme.ViewRefreshIcon())
+			uploadBtn.Importance = widget.LowImportance
+			uploadBtn.OnTapped = func() {
+				dialog.ShowConfirm("Re-upload this ride?",
+					"First delete this ride in Garmin Connect.\n\n"+
+						"Otherwise Garmin keeps the old copy and the ride is skipped\n"+
+						"as already present.\n\nUpload it again now?",
+					func(ok bool) {
+						if ok {
+							uploadActivity(act, uploadBtn)
+						}
+					}, w)
+			}
+		}
 
 		return container.NewBorder(nil, nil, nil, uploadBtn, infoLabel)
 	}
@@ -446,6 +566,8 @@ func runGUI() {
 
 	settings := container.NewVBox(
 		container.NewBorder(nil, nil, widget.NewLabel("Show rides in Garmin as:"), nil, deviceSelect),
+		container.NewBorder(nil, nil, widget.NewLabel("Unit ID:"), loadFitBtn, unitIDEntry),
+		deviceInfoLabel,
 		rememberCheck,
 	)
 

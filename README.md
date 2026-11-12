@@ -27,6 +27,9 @@ The result: your indoor rides show up on Garmin Connect just like a native Garmi
 
 - **Garmin MFA / two-step verification** — if Garmin asks for a code, the app shows a dialog for it.
 - **Choose the Garmin device** rides are labelled as (Fenix, Forerunner, Edge, Epix).
+- **Use your own Garmin device** — click *Use my device from a .fit file…* and pick a ride recorded on your watch/Edge (Garmin Connect web → activity → ⚙ → Export Original). The model, **Unit ID** and firmware are copied, so Garmin Connect attributes the rides to that device and can post-process them (e.g. cycling VO2max on an Edge — sync the device afterwards). The Unit ID can also be typed in by hand.
+- Without a Unit ID, a **random serial number** is generated once per installation. (The original tool used one fixed serial for everyone, which Garmin Connect matched to an unrelated Forerunner 255.)
+- **Re-upload** button on already-synced rides (delete the ride in Garmin Connect first).
 - **No double counting** — rides are skipped if Garmin Connect already has an activity at the same time (e.g. you also recorded on your watch). Can be disabled with `"skip_overlap_check": true` in `config.json`.
 - **Background mode** — `mywhoosh2garmin.exe --sync` uploads all new rides without opening a window; output goes to `~/.mywhoosh2garmin/sync.log`.
 - **Automatic sync button** (Windows) — creates a Task Scheduler task that runs the background sync every 60 minutes while you are logged in. A message box appears (at most once a day) only if you need to log in again.

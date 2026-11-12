@@ -17,11 +17,20 @@ type appConfig struct {
 	GarminEmail   string `json:"garmin_email"`
 
 	// Device is the key of the Garmin device the rides are labelled as
-	// (see devicePresets). Empty means the default.
+	// (see devicePresets, or "custom"). Empty means the default.
 	Device string `json:"device,omitempty"`
-	// DeviceSerial optionally overrides the serial number written to the
-	// FIT file. 0 keeps the built-in value. Advanced; edit config.json.
+	// DeviceProduct is the Garmin product id when Device is "custom".
+	DeviceProduct uint16 `json:"device_product,omitempty"`
+	// DeviceSerial is the Unit ID of the user's own Garmin device.
+	// When set, Garmin Connect attributes the rides to that device, which
+	// lets it post-process them (e.g. cycling VO2max on an Edge).
 	DeviceSerial uint32 `json:"device_serial,omitempty"`
+	// DeviceSoftwareVersion is the device firmware ×100 (2618 = 26.18);
+	// 0 keeps the value from the MyWhoosh file.
+	DeviceSoftwareVersion uint16 `json:"device_software_version,omitempty"`
+	// GeneratedSerial is a random serial number created on first use, used
+	// when DeviceSerial is not set.
+	GeneratedSerial uint32 `json:"generated_serial,omitempty"`
 
 	// SyncDays is how many days back to look for rides (default 10).
 	SyncDays int `json:"sync_days,omitempty"`
