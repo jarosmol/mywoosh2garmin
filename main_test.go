@@ -175,11 +175,30 @@ func TestFixFitFile(t *testing.T) {
 }
 
 func TestDevicePresets(t *testing.T) {
-	// Unknown / empty keys fall back to the original default (Fenix 6S)
+	// Unknown / empty keys fall back to the default (Tacx Training app)
 	for _, key := range []string{"", "nonsense"} {
-		if p := findPreset(key); p.Product != typedef.GarminProductFenix6s {
-			t.Errorf("findPreset(%q) = %v, want Fenix 6S default", key, p.Label)
+		if p := findPreset(key); p.Key != tacxKey {
+			t.Errorf("findPreset(%q) = %v, want Tacx default", key, p.Label)
 		}
+	}
+
+	// Tacx: manufacturer Tacx, its own version, never the user's Unit ID
+	tacx := deviceFromConfig(appConfig{Device: tacxKey, DeviceSerial: 3461453371,
+		DeviceSoftwareVersion: 2618, GeneratedSerial: 1234567890})
+	if tacx.Manufacturer != typedef.ManufacturerTacx ||
+		tacx.Product != typedef.GarminProductTacxTrainingAppWin.Uint16() ||
+		tacx.Serial != 1234567890 || tacx.SoftwareVersion != 358 {
+		t.Errorf("tacx spec: %+v", tacx)
+	}
+	if usesUnitID(appConfig{Device: tacxKey}) || !usesUnitID(appConfig{Device: "edge540"}) {
+		t.Error("usesUnitID wrong")
+	}
+	// Importing an Edge never maps to the Tacx app identity
+	if p, ok := findPresetByProduct(typedef.GarminProductEdge540.Uint16()); !ok || p.Key != "edge540" {
+		t.Errorf("findPresetByProduct(edge540) = %v %v", p.Key, ok)
+	}
+	if _, ok := findPresetByProduct(typedef.GarminProductTacxTrainingAppWin.Uint16()); ok {
+		t.Error("app identity must not be matched as a device")
 	}
 	seen := map[string]bool{}
 	for _, p := range devicePresets {
@@ -196,10 +215,10 @@ func TestDevicePresets(t *testing.T) {
 	}
 	// Serial override from config
 	// Unit ID wins over the generated serial; generated one is the fallback
-	if d := deviceFromConfig(appConfig{DeviceSerial: 12345, GeneratedSerial: 999}); d.Serial != 12345 {
+	if d := deviceFromConfig(appConfig{Device: "edge540", DeviceSerial: 12345, GeneratedSerial: 999}); d.Serial != 12345 {
 		t.Errorf("Unit ID ignored: %d", d.Serial)
 	}
-	if d := deviceFromConfig(appConfig{GeneratedSerial: 999}); d.Serial != 999 {
+	if d := deviceFromConfig(appConfig{Device: "edge540", GeneratedSerial: 999}); d.Serial != 999 {
 		t.Errorf("generated serial ignored: %d", d.Serial)
 	}
 	// Custom (non-listed) imported model
@@ -403,4 +422,35 @@ func searchSubstr(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+func TestFixFitFileTacx(t *testing.T) {
+	dir := t.TempDir()
+	in, out := filepath.Join(dir, "in.fit"), filepath.Join(dir, "out.fit")
+	createTestFitFile(t, in)
+
+	dev := deviceFromConfig(appConfig{Device: tacxKey, GeneratedSerial: 1234567890})
+	if _, err := fixFitFile(in, out, dev); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	lis := filedef.NewListener()
+	defer lis.Close()
+	if _, err := decoder.New(f, decoder.WithMesgListener(lis), decoder.WithBroadcastOnly()).Decode(); err != nil {
+		t.Fatal(err)
+	}
+	a := lis.File().(*filedef.Activity)
+	if a.FileId.Manufacturer != typedef.ManufacturerTacx ||
+		a.FileId.Product != typedef.GarminProductTacxTrainingAppWin.Uint16() ||
+		a.FileId.SerialNumber != 1234567890 {
+		t.Errorf("file_id: %+v", a.FileId)
+	}
+	if len(a.DeviceInfos) != 1 || a.DeviceInfos[0].Manufacturer != typedef.ManufacturerTacx ||
+		a.DeviceInfos[0].SoftwareVersion != 358 {
+		t.Errorf("device_info: %+v", a.DeviceInfos)
+	}
 }

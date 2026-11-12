@@ -274,15 +274,19 @@ func spoofDevice(activity *filedef.Activity, dev deviceSpec) {
 	if serial == 0 {
 		serial = fakeSerialNumber
 	}
+	manuf := dev.Manufacturer
+	if manuf == 0 {
+		manuf = garminManufacturer
+	}
 
-	activity.FileId.Manufacturer = garminManufacturer
+	activity.FileId.Manufacturer = manuf
 	activity.FileId.Product = dev.Product
 	activity.FileId.SerialNumber = serial
 	activity.FileId.ProductName = ""
 
 	hasCreator := false
 	for _, di := range activity.DeviceInfos {
-		di.Manufacturer = garminManufacturer
+		di.Manufacturer = manuf
 		di.Product = dev.Product
 		di.SerialNumber = serial
 		di.ProductName = ""
@@ -306,7 +310,7 @@ func spoofDevice(activity *filedef.Activity, dev deviceSpec) {
 			SetTimestamp(ts).
 			SetDeviceIndex(typedef.DeviceIndexCreator).
 			SetDeviceType(255).
-			SetManufacturer(garminManufacturer).
+			SetManufacturer(manuf).
 			SetProduct(dev.Product).
 			SetSerialNumber(serial).
 			SetSourceType(typedef.SourceTypeLocal)
@@ -320,7 +324,7 @@ func spoofDevice(activity *filedef.Activity, dev deviceSpec) {
 	if dev.SoftwareVersion != 0 {
 		fw = fmt.Sprintf(", firmware %d.%02d", dev.SoftwareVersion/100, dev.SoftwareVersion%100)
 	}
-	logFn("  → device spoofed: Garmin %s (product %d, Unit ID %d%s)\n",
+	logFn("  → device spoofed: %s (product %d, serial %d%s)\n",
 		dev.Name, dev.Product, serial, fw)
 }
 

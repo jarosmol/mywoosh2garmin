@@ -26,8 +26,9 @@ The result: your indoor rides show up on Garmin Connect just like a native Garmi
 ## What's new in this fork
 
 - **Garmin MFA / two-step verification** — if Garmin asks for a code, the app shows a dialog for it.
-- **Choose the Garmin device** rides are labelled as (Fenix, Forerunner, Edge, Epix).
-- **Use your own Garmin device** — click *Use my device from a .fit file…* and pick a ride recorded on your watch/Edge (Garmin Connect web → activity → ⚙ → Export Original). The model, **Unit ID** and firmware are copied, so Garmin Connect attributes the rides to that device and can post-process them (e.g. cycling VO2max on an Edge — sync the device afterwards). The Unit ID can also be typed in by hand.
+- **Tacx Training app identity (default, recommended)** — rides are uploaded as recorded by Garmin's own Tacx Training app. Garmin Connect then computes Training Effect, Training Load **and cycling VO2max** for your Garmin devices. (Tested: a relabelled MyWhoosh ride updated cycling VO2max. Rides labelled as a physical device — especially with your own Unit ID — did not.)
+- **Or choose a Garmin device** rides are labelled as (Fenix, Forerunner, Edge, Epix).
+- **Use your own Garmin device** — click *Use my device from a .fit file…* and pick a ride recorded on your watch/Edge (Garmin Connect web → activity → ⚙ → Export Original). The model, **Unit ID** and firmware are copied, so Garmin Connect attributes the rides to that device and shows them as that device's rides. Note: Garmin then treats them as the device's own recordings and does not update VO2max — use the Tacx option for that. The Unit ID can also be typed in by hand.
 - Without a Unit ID, a **random serial number** is generated once per installation. (The original tool used one fixed serial for everyone, which Garmin Connect matched to an unrelated Forerunner 255.)
 - **Re-upload** button on already-synced rides (delete the ride in Garmin Connect first).
 - **No double counting** — rides are skipped if Garmin Connect already has an activity at the same time (e.g. you also recorded on your watch). Can be disabled with `"skip_overlap_check": true` in `config.json`.

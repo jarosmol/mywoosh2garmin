@@ -119,21 +119,31 @@ func runGUI() {
 
 	deviceInfoLabel := widget.NewLabel("")
 	deviceInfoLabel.Wrapping = fyne.TextWrapWord
+	// unitIDRow holds the Unit ID entry and the import button; it is
+	// disabled for the Tacx app identity, which never uses a Unit ID.
+	var setUnitIDEnabled func(bool)
+
 	refreshDeviceInfo := func() {
 		c := loadAppConfig()
-		if c.DeviceSerial != 0 {
+		if setUnitIDEnabled != nil {
+			setUnitIDEnabled(usesUnitID(c))
+		}
+		switch {
+		case !usesUnitID(c):
+			deviceInfoLabel.SetText("Rides are uploaded as recorded by Garmin's Tacx Training app. " +
+				"Garmin Connect then computes Training Effect, Training Load and VO2max for your " +
+				"Garmin devices. The Unit ID below is not used with this option.")
+		case c.DeviceSerial != 0:
 			txt := fmt.Sprintf("Rides will be attributed to your own device (Unit ID %d)", c.DeviceSerial)
 			if c.DeviceSoftwareVersion != 0 {
 				txt += fmt.Sprintf(", firmware %d.%02d", c.DeviceSoftwareVersion/100, c.DeviceSoftwareVersion%100)
 			}
-			deviceInfoLabel.SetText(txt + ".")
-		} else {
-			deviceInfoLabel.SetText("No Unit ID set — a random serial number is used. " +
-				"Tip: load a .fit file recorded on your own Garmin so Garmin Connect " +
-				"can process the rides on that device (e.g. cycling VO2max on an Edge).")
+			deviceInfoLabel.SetText(txt + ". Note: Garmin then treats them as that device's own " +
+				"rides and does not update VO2max — use the Tacx option for that.")
+		default:
+			deviceInfoLabel.SetText("No Unit ID set — a random serial number is used.")
 		}
 	}
-	refreshDeviceInfo()
 
 	// updatingDevice suppresses the OnChanged handlers while the UI is being
 	// filled in programmatically.
@@ -213,6 +223,17 @@ func runGUI() {
 		fd.SetFilter(storage.NewExtensionFileFilter([]string{".fit", ".FIT"}))
 		fd.Show()
 	}
+
+	setUnitIDEnabled = func(on bool) {
+		if on {
+			unitIDEntry.Enable()
+			loadFitBtn.Enable()
+		} else {
+			unitIDEntry.Disable()
+			loadFitBtn.Disable()
+		}
+	}
+	refreshDeviceInfo()
 
 	rememberCheck := widget.NewCheck(
 		"Remember MyWhoosh password (encrypted with your Windows account) — needed for fully automatic sync",

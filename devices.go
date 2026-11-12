@@ -18,27 +18,49 @@ type devicePreset struct {
 	Key     string
 	Label   string
 	Product typedef.GarminProduct
+	// Manufacturer defaults to Garmin when zero.
+	Manufacturer typedef.Manufacturer
+	// App marks a software recorder (not a physical device): the user's
+	// Unit ID is never used with it and it has its own version number.
+	App             bool
+	SoftwareVersion uint16
 }
 
-// devicePresets lists the selectable devices. The first entry is the default
-// (it is what the original tool used and is known to work).
+// manufacturer returns the preset's manufacturer (Garmin by default).
+func (p devicePreset) manufacturer() typedef.Manufacturer {
+	if p.Manufacturer == 0 {
+		return typedef.ManufacturerGarmin
+	}
+	return p.Manufacturer
+}
+
+// tacxKey is the Tacx Training app identity. Garmin Connect post-processes
+// rides from this official Garmin app for the user's VO2max-capable device,
+// so — unlike a spoofed watch/Edge — such rides do update VO2max. Verified:
+// a re-labelled MyWhoosh ride updated cycling VO2max (Nov 2026).
+const tacxKey = "tacx"
+
+// devicePresets lists the selectable devices. The first entry is the default.
 var devicePresets = []devicePreset{
-	{"fenix6s", "Fenix 6S (default)", typedef.GarminProductFenix6s},
-	{"fenix6", "Fenix 6", typedef.GarminProductFenix6},
-	{"fenix7", "Fenix 7", typedef.GarminProductFenix7},
-	{"fenix8", "Fenix 8", typedef.GarminProductFenix8},
-	{"epix2", "Epix (Gen 2)", typedef.GarminProductEpixGen2},
-	{"fr945", "Forerunner 945", typedef.GarminProductFr945},
-	{"fr955", "Forerunner 955", typedef.GarminProductFr955},
-	{"fr965", "Forerunner 965", typedef.GarminProductFr965},
-	{"edge530", "Edge 530", typedef.GarminProductEdge530},
-	{"edge830", "Edge 830", typedef.GarminProductEdge830},
-	{"edge540", "Edge 540 / 540 Solar", typedef.GarminProductEdge540},
-	{"edge840", "Edge 840 / 840 Solar", typedef.GarminProductEdge840},
-	{"edge1030", "Edge 1030", typedef.GarminProductEdge1030},
-	{"edge1030plus", "Edge 1030 Plus", typedef.GarminProductEdge1030Plus},
-	{"edge1040", "Edge 1040", typedef.GarminProductEdge1040},
-	{"edge1050", "Edge 1050", typedef.GarminProductEdge1050},
+	{Key: tacxKey, Label: "Tacx Training app (recommended — updates VO2max)",
+		Product: typedef.GarminProductTacxTrainingAppWin, Manufacturer: typedef.ManufacturerTacx,
+		App: true, SoftwareVersion: 358},
+	{Key: "fenix6s", Label: "Fenix 6S", Product: typedef.GarminProductFenix6s},
+	{Key: "fenix6", Label: "Fenix 6", Product: typedef.GarminProductFenix6},
+	{Key: "fenix7", Label: "Fenix 7", Product: typedef.GarminProductFenix7},
+	{Key: "fenix8", Label: "Fenix 8", Product: typedef.GarminProductFenix8},
+	{Key: "epix2", Label: "Epix (Gen 2)", Product: typedef.GarminProductEpixGen2},
+	{Key: "fr945", Label: "Forerunner 945", Product: typedef.GarminProductFr945},
+	{Key: "fr955", Label: "Forerunner 955", Product: typedef.GarminProductFr955},
+	{Key: "fr965", Label: "Forerunner 965", Product: typedef.GarminProductFr965},
+	{Key: "edge530", Label: "Edge 530", Product: typedef.GarminProductEdge530},
+	{Key: "edge830", Label: "Edge 830", Product: typedef.GarminProductEdge830},
+	{Key: "edge540", Label: "Edge 540 / 540 Solar", Product: typedef.GarminProductEdge540},
+	{Key: "edge840", Label: "Edge 840 / 840 Solar", Product: typedef.GarminProductEdge840},
+	{Key: "edge1030", Label: "Edge 1030", Product: typedef.GarminProductEdge1030},
+	{Key: "edge1030plus", Label: "Edge 1030 Plus", Product: typedef.GarminProductEdge1030Plus},
+	{Key: "edge1040", Label: "Edge 1040", Product: typedef.GarminProductEdge1040},
+	{Key: "edge1050", Label: "Edge 1050", Product: typedef.GarminProductEdge1050},
 }
 
 // customDeviceKey marks a device imported from a FIT file whose model is not
@@ -48,6 +70,7 @@ const customDeviceKey = "custom"
 // deviceSpec is what actually gets written into the FIT file.
 type deviceSpec struct {
 	Name            string
+	Manufacturer    typedef.Manufacturer // 0 = Garmin
 	Product         uint16
 	Serial          uint32 // Garmin "Unit ID"; 0 = keep whatever is in the file
 	SoftwareVersion uint16 // firmware ×100 (e.g. 2618 = 26.18); 0 = keep the file's
@@ -73,10 +96,11 @@ func findPresetByLabel(label string) devicePreset {
 	return devicePresets[0]
 }
 
-// findPresetByProduct returns the preset for a Garmin product id, if listed.
+// findPresetByProduct returns the physical-device preset for a Garmin
+// product id, if listed.
 func findPresetByProduct(product uint16) (devicePreset, bool) {
 	for _, p := range devicePresets {
-		if p.Product.Uint16() == product {
+		if !p.App && p.Product.Uint16() == product {
 			return p, true
 		}
 	}
@@ -97,9 +121,12 @@ func customLabel(product uint16) string {
 }
 
 // deviceFromConfig builds the device spec from the saved configuration.
-// The serial is the user's Unit ID if set, otherwise the generated one.
+// For a physical device the serial is the user's Unit ID if set, otherwise
+// the generated one. An app identity (Tacx) always uses the generated serial
+// and its own version: using the Unit ID of the user's Edge would make
+// Garmin treat the ride as the Edge's own recording.
 func deviceFromConfig(cfg appConfig) deviceSpec {
-	spec := deviceSpec{SoftwareVersion: cfg.DeviceSoftwareVersion}
+	spec := deviceSpec{Manufacturer: typedef.ManufacturerGarmin}
 
 	if cfg.Device == customDeviceKey && cfg.DeviceProduct != 0 {
 		spec.Product = cfg.DeviceProduct
@@ -108,13 +135,28 @@ func deviceFromConfig(cfg appConfig) deviceSpec {
 		p := findPreset(cfg.Device)
 		spec.Product = p.Product.Uint16()
 		spec.Name = p.Label
+		spec.Manufacturer = p.manufacturer()
+		if p.App {
+			spec.Serial = cfg.GeneratedSerial
+			spec.SoftwareVersion = p.SoftwareVersion
+			return spec
+		}
 	}
 
+	spec.SoftwareVersion = cfg.DeviceSoftwareVersion
 	spec.Serial = cfg.DeviceSerial
 	if spec.Serial == 0 {
 		spec.Serial = cfg.GeneratedSerial
 	}
 	return spec
+}
+
+// usesUnitID reports whether the current choice uses the user's Unit ID.
+func usesUnitID(cfg appConfig) bool {
+	if cfg.Device == customDeviceKey {
+		return true
+	}
+	return !findPreset(cfg.Device).App
 }
 
 // currentDevice loads the configuration, makes sure a generated serial
