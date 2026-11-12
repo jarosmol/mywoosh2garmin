@@ -14,6 +14,7 @@ import (
 	"github.com/muktihari/fit/decoder"
 	"github.com/muktihari/fit/encoder"
 	"github.com/muktihari/fit/profile/filedef"
+	"github.com/muktihari/fit/profile/mesgdef"
 	"github.com/muktihari/fit/profile/typedef"
 	"github.com/muktihari/fit/proto"
 )
@@ -279,6 +280,7 @@ func spoofDevice(activity *filedef.Activity, dev deviceSpec) {
 	activity.FileId.SerialNumber = serial
 	activity.FileId.ProductName = ""
 
+	hasCreator := false
 	for _, di := range activity.DeviceInfos {
 		di.Manufacturer = garminManufacturer
 		di.Product = dev.Product
@@ -287,6 +289,31 @@ func spoofDevice(activity *filedef.Activity, dev deviceSpec) {
 		if dev.SoftwareVersion != 0 {
 			di.SoftwareVersion = dev.SoftwareVersion
 		}
+		if di.DeviceIndex == typedef.DeviceIndexCreator {
+			hasCreator = true
+		}
+	}
+
+	// MyWhoosh files carry no device_info at all, while every file recorded
+	// on a Garmin has one for the recording device (index 0). Add it, the
+	// way an Edge writes it, so the file looks like a genuine recording.
+	if !hasCreator {
+		ts := activity.FileId.TimeCreated
+		if len(activity.Records) > 0 && !activity.Records[0].Timestamp.IsZero() {
+			ts = activity.Records[0].Timestamp
+		}
+		di := mesgdef.NewDeviceInfo(nil).
+			SetTimestamp(ts).
+			SetDeviceIndex(typedef.DeviceIndexCreator).
+			SetDeviceType(255).
+			SetManufacturer(garminManufacturer).
+			SetProduct(dev.Product).
+			SetSerialNumber(serial).
+			SetSourceType(typedef.SourceTypeLocal)
+		if dev.SoftwareVersion != 0 {
+			di.SetSoftwareVersion(dev.SoftwareVersion)
+		}
+		activity.DeviceInfos = append([]*mesgdef.DeviceInfo{di}, activity.DeviceInfos...)
 	}
 
 	fw := ""

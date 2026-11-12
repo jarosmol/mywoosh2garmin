@@ -161,10 +161,15 @@ func TestFixFitFile(t *testing.T) {
 	if result.FileId.SerialNumber != 3461453371 {
 		t.Errorf("serial: got %d, want the configured Unit ID", result.FileId.SerialNumber)
 	}
+	// The MyWhoosh-like input has no device_info: a creator entry is added
+	if len(result.DeviceInfos) != 1 {
+		t.Fatalf("device_info count: got %d, want 1 (added creator)", len(result.DeviceInfos))
+	}
 	for i, di := range result.DeviceInfos {
-		if di.SerialNumber != 3461453371 || di.SoftwareVersion != 2618 {
-			t.Errorf("device_info[%d]: serial %d sw %d, want Unit ID and firmware 26.18",
-				i, di.SerialNumber, di.SoftwareVersion)
+		if di.DeviceIndex != typedef.DeviceIndexCreator || di.Manufacturer != typedef.ManufacturerGarmin ||
+			di.Product != typedef.GarminProductEdge840.Uint16() ||
+			di.SerialNumber != 3461453371 || di.SoftwareVersion != 2618 {
+			t.Errorf("device_info[%d]: %+v, want creator Edge 840 with Unit ID and firmware 26.18", i, di)
 		}
 	}
 }
